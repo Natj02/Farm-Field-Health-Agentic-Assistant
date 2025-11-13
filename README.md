@@ -10,6 +10,21 @@ This README summarizes how to set up and run:
 - Firewall & connectivity checks
 
 ---
+## Environment Specs
+
+The development VM used for this setup had the following configuration:
+
+- **OS:** AlmaLinux 10 (Minimal)
+- **Virtualization:** VirtualBox
+- **Base Memory:** 8000 MB
+- **Processors:** 4
+- **Video Memory:** 16 MB (VMSVGA)
+- **Storage:** 70 GB VDI (SATA)
+- **Network Adapter:** Intel PRO/1000 MT Desktop (Bridged Adapter)
+- **Audio:** ICH AC97
+- **USB Controller:** OHCI/EHCI
+
+---
 
 ## 1. Node.js / React (Vite)
 
