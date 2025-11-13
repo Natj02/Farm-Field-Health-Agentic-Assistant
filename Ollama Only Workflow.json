@@ -1,0 +1,290 @@
+{
+  "name": "Ollama Only Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "field-analysis",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -608,
+        320
+      ],
+      "id": "720d6982-9c44-4c7b-b870-25540d85b605",
+      "name": "Webhook",
+      "webhookId": "0c715d0c-3eba-4d5b-9f38-3bf0574970a3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/score_fields",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($input.all().map(item => item.json)) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -256,
+        320
+      ],
+      "id": "422b9d16-431e-4e10-8f87-d1f659788df5",
+      "name": "HTTP Request",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:11434/api/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json[\"ollama_payload\"]) }}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        352
+      ],
+      "id": "9bdec06c-9512-4ff9-8924-888d517cff5b",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        832,
+        368
+      ],
+      "id": "8c2dd971-6e2e-4a45-9aea-1af5912106a5",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This node runs right after the Webhook.\n// The React app sends an array of field objects as the JSON body.\n\nconst rows = $json.body;\n\nif (!Array.isArray(rows) || rows.length === 0) {\n  throw new Error('No field rows received in request body.');\n}\n\n// Helper to coerce numeric columns\nfunction toNum(v) {\n  const n = Number(v);\n  return Number.isFinite(n) ? n : 0;\n}\n\n// Normalise each incoming row into one item per field\nconst fields = rows.map((row, index) => ({\n  field_id: row.field_id ?? index + 1,\n  field_name: row.field_name ?? `Field ${index + 1}`,\n  location: row.location ?? '',\n  crop: row.crop ?? '',\n  soil_moisture: toNum(row.soil_moisture),\n  vigor_index: toNum(row.vigor_index),\n  yield_history: toNum(row.yield_history),\n  pest_pressure: toNum(row.pest_pressure),\n}));\n\n// Emit one item per field so later nodes run per-field\nreturn fields.map(field => ({ json: field }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        192
+      ],
+      "id": "c55d5d58-fc68-48a8-95c0-00e9729e7fb7",
+      "name": "Code in JavaScript",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Each incoming item is a single field with risk info\nconst field = $json;\n\nconst prompt = `\nYou are an experienced agronomist helping farmers improve crop health and yield.\n\nGiven the following JSON describing a field's crop and monitoring indicators,\nwrite a short, practical advisory note of 4–6 sentences. The note should:\n- explain the overall risk level (\"${field.risk_level}\") and risk score (${field.risk_score})\n- comment on soil moisture, pest pressure, nutrient status, and yield potential\n- give 3–4 concrete recommendations the farmer can apply this season.\n\nField JSON:\n${JSON.stringify(field, null, 2)}\n`;\n\nreturn {\n  json: {\n    ...field,\n    prompt,\n  },\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        208
+      ],
+      "id": "9b765556-a103-4b42-aa3b-8d0c3960bfda",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// JS2 – build the body we’ll send to Ollama for THIS field\nconst field = $json;\n\nconst ollama_payload = {\n  model: \"llama3.2\",\n  prompt: field.prompt,   // or field.ollama_prompt if you renamed it\n  stream: false,\n};\n\nreturn {\n  json: {\n    ...field,          // keep all the risk info etc\n    ollama_payload,    // attach payload we’ll POST in HTTP Request1\n  },\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        208
+      ],
+      "id": "48556ec0-eaf8-4da5-87c6-e996f7e2e315",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// JS3 – merge Ollama response + original field info\n\n// Items coming from HTTP Request1 (Ollama result for each field)\nconst llmItems = $items(); // previous node's items\n\n// Original field data from \"Code in JavaScript2\"\nconst fieldItems = $items(\"Code in JavaScript2\", 0); // all items from first run\n\nconst merged = llmItems.map((item, index) => {\n  const field = fieldItems[index].json;     // original field (id, name, risk, etc.)\n  const httpResult = item.json;            // Ollama response for this field\n\n  const adviceText =\n    httpResult.response ||\n    httpResult.message ||\n    httpResult.output ||\n    \"\";\n\n  return {\n    json: {\n      ...field,                // field_id, field_name, crop, risk_level, risk_score, ...\n      advice: adviceText,      // what your React app will display\n      ollama_raw: httpResult,  // optional: keep full raw response if you want\n    },\n  };\n});\n\nreturn merged;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        208
+      ],
+      "id": "fcc66adf-6132-4b70-a3f5-20d12aacb529",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-exp",
+        "options": {
+          "maxOutputTokens": 512
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        -112,
+        688
+      ],
+      "id": "49bd19ba-e2e1-4d10-b4fe-d7758a092d52",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "fskAi3AGla0hBMp8",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{$json[\"prompt\"]}}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [
+        -48,
+        528
+      ],
+      "id": "d536dd5d-6ad1-4bc6-b5a3-8ebb70aadbff",
+      "name": "AI Agent",
+      "disabled": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "5110795b-4bd7-432e-8d44-cc6d16186e9d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d360e0811ccafe8b87da44f547cd9e9fdc15793e44b91cdd5998888253f60f19"
+  },
+  "id": "7nMRHXPfGCybK8Mi",
+  "tags": []
+}
