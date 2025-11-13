@@ -1,0 +1,5 @@
+field_id,field_name,location,crop,soil_moisture,vigor_index,yield_history,pest_pressure
+1,North Ridge 1,Farm A - North Ridge,Maize,45,72,68,30
+2,River Plot,Southern Riverbank,Soybean,62,81,74,15
+3,Hilltop West,Hilltop Terrace,Wheat,30,60,55,45
+
